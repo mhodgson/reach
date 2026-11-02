@@ -98,6 +98,10 @@ defmodule Reach.Plugin do
   @doc """
   Lowers framework-specific Elixir AST into ordinary Elixir AST before Reach IR translation.
 
+  Options include `:file`, enclosing `:module` and a `:callee` map with the current
+  positively resolved `:module`, `:kind`, `:function` and `:arity`. This is a
+  pre-argument snapshot; ordinary call emission still resolves after arguments.
+
   Return `:ignore` when the plugin does not own the AST node. Returned AST may
   carry `%Reach.Source.Origin{}` metadata under the `:reach` metadata key.
   """

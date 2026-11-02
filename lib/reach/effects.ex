@@ -168,17 +168,75 @@ defmodule Reach.Effects do
         classification(effect, :plugin, :high, classifier: plugin)
 
       nil ->
-        classify_call(
-          effect_call_module(node),
-          node.meta[:function],
-          node.meta[:arity],
-          plugins
-        )
+        classify_argument_sensitive_call(node, plugins) ||
+          classify_call(
+            effect_call_module(node),
+            node.meta[:function],
+            node.meta[:arity],
+            plugins
+          )
     end
   end
 
   defp classify_result(_node, _plugins),
     do: classification(:unknown, :unknown, :low, reason: :unsupported_node)
+
+  # These calls depend on argument behavior, so do not cache them by MFA alone.
+  defp classify_argument_sensitive_call(
+         %Node{meta: %{kind: :remote, module: Keyword, function: :get_lazy, arity: 3}} = node,
+         plugins
+       ) do
+    effects =
+      case node.children do
+        [_, _, %Node{type: :fn, children: clauses}] when clauses != [] ->
+          if Enum.all?(clauses, &match?(%Node{type: :clause, children: [_body]}, &1)) do
+            clauses |> collect_calls() |> Enum.map(&classify(&1, plugins))
+          else
+            [:unknown]
+          end
+
+        [_, _, %Node{type: :call, meta: %{kind: :fun_ref, arity: 0}} = callback] ->
+          [callback |> executed_fun_ref() |> classify(plugins)]
+
+        _ ->
+          [:unknown]
+      end
+
+    effect =
+      cond do
+        :unknown in effects -> :unknown
+        Enum.all?(effects, &(&1 == :pure)) -> :pure
+        true -> merge_effects(effects -- [:pure])
+      end
+
+    classification(effect, :builtin, :medium)
+  end
+
+  defp classify_argument_sensitive_call(
+         %Node{meta: %{kind: :remote, module: module, function: :to_string, arity: 1}} = node,
+         plugins
+       )
+       when module in [Kernel, String.Chars] do
+    case lookup_local_cache({module, :to_string, 1}, plugins) do
+      {:ok, result} ->
+        normalize_classification(result, :local_inference)
+
+      :miss ->
+        effect =
+          case node.children do
+            [%Node{type: :literal, meta: %{value: value}}]
+            when is_atom(value) or is_binary(value) or is_integer(value) or is_float(value) ->
+              :pure
+
+            _ ->
+              :unknown
+          end
+
+        classification(effect, :builtin, :medium)
+    end
+  end
+
+  defp classify_argument_sensitive_call(_node, _plugins), do: nil
 
   @doc """
   Returns true if the node is pure (no side effects).
@@ -215,10 +273,16 @@ defmodule Reach.Effects do
 
   Walks all function definitions and classifies each based on the effects
   of its callees. Iterates until no new classifications are found (fixed-point).
-  Results are cached in the ETS classify cache.
+  Results are cached in the ETS classify cache. Authoritative source bodies
+  register pending unknown summaries; partial dependency analysis can opt out
+  with `authoritative: false` to retain its compiled-hint fallback.
   """
-  @spec infer_local_effects(%{Reach.IR.Node.id() => Reach.IR.Node.t()}, [module()] | nil) :: :ok
-  def infer_local_effects(node_map, plugins \\ nil) do
+  @spec infer_local_effects(
+          %{Reach.IR.Node.id() => Reach.IR.Node.t()},
+          [module()] | nil,
+          keyword()
+        ) :: :ok
+  def infer_local_effects(node_map, plugins \\ nil, opts \\ []) do
     plugins = resolve_plugins(plugins)
     ensure_cache()
 
@@ -250,6 +314,14 @@ defmodule Reach.Effects do
 
         {key, {calls, aliases}}
       end)
+
+    # Pending source bodies must shadow compiled return-type hints until their
+    # callees resolve. Keep their unknown summaries when inference cannot finish.
+    if Keyword.get(opts, :authoritative, true) do
+      Enum.each(func_calls, fn {key, {_calls, aliases}} ->
+        cache_function_effect(key, aliases, :unknown, plugins)
+      end)
+    end
 
     with_local_inference_modules(local_modules, fn ->
       with_dependency_collection(fn -> do_infer(func_calls, plugins) end)
@@ -412,7 +484,9 @@ defmodule Reach.Effects do
   end
 
   defp try_infer_function({key, {calls, aliases}}, plugins) do
-    if lookup_local_cache(key, plugins) != :miss do
+    cached = lookup_local_cache(key, plugins)
+
+    if cached != :miss and not match?({:ok, %Classification{effect: :unknown}}, cached) do
       false
     else
       effects =
@@ -564,7 +638,6 @@ defmodule Reach.Effects do
     :byte_size,
     :is_exception,
     :is_struct,
-    :to_string,
     :to_charlist,
     :inspect,
     :then,
@@ -1216,6 +1289,8 @@ defmodule Reach.Effects do
   end
 
   defp pure_module?(module), do: module in @pure_modules
+
+  defp pure_function?(IO, :iodata_to_binary, 1), do: true
 
   defp pure_function?(module, function, arity) do
     {module, function, arity} in @pure_erlang_functions

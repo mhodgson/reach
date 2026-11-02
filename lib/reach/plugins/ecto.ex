@@ -192,6 +192,116 @@ defmodule Reach.Plugins.Ecto do
     :execute
   ]
 
+  @field_expression_macros [:select, :where, :order_by]
+  @field_expression_operators [
+    :==,
+    :!=,
+    :>,
+    :>=,
+    :<,
+    :<=,
+    :and,
+    :or,
+    :not,
+    :in,
+    :is_nil,
+    :+,
+    :-,
+    :*,
+    :/,
+    :{},
+    :%{}
+  ]
+  @join_bindings [:join, :left_join, :right_join, :inner_join, :full_join, :cross_join]
+
+  @impl true
+  def lower_elixir_ast(ast, opts) do
+    case opts[:callee] do
+      %{module: Ecto.Query, kind: :remote, function: name} ->
+        {_module, _name, args} = AST.call(ast)
+        lowered = lower_field_arguments(name, args, opts)
+        if lowered == args, do: :ignore, else: {:ok, put_call_arguments(ast, lowered)}
+
+      _ ->
+        :ignore
+    end
+  end
+
+  defp lower_field_arguments(:from, [queryable, options], opts) when is_list(options) do
+    if Keyword.keyword?(options) do
+      bindings =
+        from_binding(queryable) ++
+          Enum.flat_map(options, fn
+            {key, value} when key in @join_bindings -> from_binding(value)
+            _ -> []
+          end)
+
+      [
+        queryable,
+        Enum.map(options, fn
+          {key, expression} when key in @field_expression_macros ->
+            {key, lower_field_expression(expression, bindings, opts)}
+
+          option ->
+            option
+        end)
+      ]
+    else
+      [queryable, options]
+    end
+  end
+
+  defp lower_field_arguments(name, [queryable, bindings, expression], opts)
+       when name in @field_expression_macros and is_list(bindings) do
+    names = Enum.flat_map(bindings, &binding_name/1)
+    [queryable, bindings, lower_field_expression(expression, names, opts)]
+  end
+
+  defp lower_field_arguments(_name, args, _opts), do: args
+
+  defp from_binding({:in, _, [binding, _queryable]}), do: binding_name(binding)
+  defp from_binding(_), do: []
+  defp binding_name({name, _, context}) when is_atom(name) and is_atom(context), do: [name]
+  defp binding_name(_), do: []
+
+  defp lower_field_expression(
+         {:field, meta, [{name, _, context}, _column] = args} = ast,
+         bindings,
+         opts
+       )
+       when is_atom(context) do
+    if name in bindings do
+      origin = %Reach.Source.Origin{
+        language: :elixir,
+        kind: :ecto_query_field,
+        plugin: __MODULE__,
+        generated?: false,
+        span: Reach.Source.Span.from_meta(meta, opts[:file])
+      }
+
+      Reach.Source.put_origin({{:., meta, [Ecto.Query, :field]}, meta, args}, origin)
+    else
+      ast
+    end
+  end
+
+  defp lower_field_expression({operator, meta, args}, bindings, opts)
+       when operator in @field_expression_operators and is_list(args) do
+    {operator, meta, Enum.map(args, &lower_field_expression(&1, bindings, opts))}
+  end
+
+  defp lower_field_expression({left, right}, bindings, opts) do
+    {lower_field_expression(left, bindings, opts), lower_field_expression(right, bindings, opts)}
+  end
+
+  defp lower_field_expression(values, bindings, opts) when is_list(values),
+    do: Enum.map(values, &lower_field_expression(&1, bindings, opts))
+
+  # Interpolation, queryables, unknown calls and nested DSLs are not query field syntax.
+  defp lower_field_expression(expression, _bindings, _opts), do: expression
+
+  defp put_call_arguments({form, meta, _args}, args), do: {form, meta, args}
+
   @impl true
   def refine_macro_fact(%MacroFact{name: :use, target: module} = fact, _context)
       when module in [Ecto.Schema, Ecto.Migration] do

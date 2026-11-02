@@ -778,25 +778,40 @@ defmodule Reach.Frontend.Elixir do
   end
 
   # Remote call: Module.function(args)
-  defp translate({{:., meta, [module, fun_name]}, call_meta, args}, counter, file)
+  defp translate({{:., meta, [module, fun_name]}, call_meta, args} = ast, counter, file)
        when is_atom(fun_name) do
-    arg_nodes = Enum.map(args, &translate(&1, counter, file))
-    {receiver_children, resolved_module} = translate_receiver(module, counter, file)
+    hook_module = module_name(module)
 
-    %Node{
-      id: Counter.next(counter),
-      type: :call,
-      meta:
-        %{
-          module: resolved_module,
-          function: fun_name,
-          arity: length(args),
-          kind: :remote
-        }
-        |> Map.merge(origin_meta(call_meta || meta)),
-      children: receiver_children ++ arg_nodes,
-      source_span: span_from_meta(call_meta || meta, file)
+    callee = %{
+      module: if(is_atom(hook_module), do: hook_module),
+      kind: if(is_atom(hook_module), do: :remote, else: :dynamic),
+      function: fun_name,
+      arity: length(args)
     }
+
+    case lower_elixir_ast(ast, file, callee) do
+      {:ok, lowered_ast} ->
+        translate(lowered_ast, counter, file)
+
+      _ ->
+        arg_nodes = Enum.map(args, &translate(&1, counter, file))
+        {receiver_children, resolved_module} = translate_receiver(module, counter, file)
+
+        %Node{
+          id: Counter.next(counter),
+          type: :call,
+          meta:
+            %{
+              module: resolved_module,
+              function: fun_name,
+              arity: length(args),
+              kind: :remote
+            }
+            |> Map.merge(origin_meta(call_meta || meta)),
+          children: receiver_children ++ arg_nodes,
+          source_span: span_from_meta(call_meta || meta, file)
+        }
+    end
   end
 
   # Local call: function(args) — check if imported
@@ -864,7 +879,10 @@ defmodule Reach.Frontend.Elixir do
   end
 
   defp translate_local_call({fun_name, meta, args} = ast, counter, file) do
-    case lower_elixir_ast(ast, file) do
+    {hook_module, hook_kind} = resolve_import(fun_name, length(args))
+    callee = %{module: hook_module, kind: hook_kind, function: fun_name, arity: length(args)}
+
+    case lower_elixir_ast(ast, file, callee) do
       {:ok, lowered_ast} ->
         translate(lowered_ast, counter, file)
 
@@ -1406,9 +1424,9 @@ defmodule Reach.Frontend.Elixir do
 
   defp origin_meta(_), do: %{}
 
-  defp lower_elixir_ast(ast, file) do
+  defp lower_elixir_ast(ast, file, callee) do
     plugins = Process.get(:reach_plugins, [])
-    opts = [file: file, module: Process.get(:reach_current_module)]
+    opts = [file: file, module: Process.get(:reach_current_module), callee: callee]
     Plugin.lower_elixir_ast(plugins, ast, opts)
   end
 

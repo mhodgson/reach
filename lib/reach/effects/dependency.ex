@@ -157,7 +157,7 @@ defmodule Reach.Effects.Dependency do
   defp build_summary(module, nodes) do
     function_defs = Enum.filter(nodes, &(&1.type == :function_def))
     node_map = nodes |> IR.all_nodes() |> Map.new(&{&1.id, &1})
-    :ok = Effects.infer_local_effects(node_map, @inference_plugins)
+    :ok = Effects.infer_local_effects(node_map, @inference_plugins, authoritative: false)
     Map.new(function_defs, &function_effect(module, &1))
   end
 

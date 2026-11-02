@@ -73,7 +73,6 @@ defmodule Reach.Plugins.Phoenix do
     :delete,
     :patch,
     :pipe_through,
-    :pipeline,
     :scope,
     :live,
     :resources,
@@ -267,6 +266,9 @@ defmodule Reach.Plugins.Phoenix do
   end
 
   @impl true
+  def classify_effect(%Node{type: :call, meta: %{kind: :local, function: :pipeline, arity: 2}}),
+    do: :write
+
   def classify_effect(%Node{type: :call, meta: %{kind: :local, function: fun}})
       when fun in @compile_time_dsl,
       do: :write
