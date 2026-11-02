@@ -104,6 +104,8 @@ defmodule Reach.Plugin do
 
   Return `:ignore` when the plugin does not own the AST node. Returned AST may
   carry `%Reach.Source.Origin{}` metadata under the `:reach` metadata key.
+  Binary operator metadata may set `operator_semantics: :data` as defined by
+  `Reach.IR.Node`; this annotates only the operator, not its operands.
   """
   @callback lower_elixir_ast(ast :: Macro.t(), opts :: keyword()) ::
               {:ok, Macro.t()} | :ignore | {:error, term()}

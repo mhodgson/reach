@@ -32,6 +32,19 @@ defmodule Reach.Plugin.LowerElixirASTTest do
       {:ok, ast}
     end
 
+    def lower_elixir_ast({:dsl_data, meta, [left, right]}, opts) do
+      origin = %Origin{
+        language: :test_dsl,
+        kind: :operator,
+        label: "dsl_data",
+        span: Span.from_meta(meta, opts[:file]),
+        plugin: __MODULE__,
+        generated?: false
+      }
+
+      {:ok, {:and, Keyword.merge(meta, operator_semantics: :data, reach: origin), [left, right]}}
+    end
+
     def lower_elixir_ast(_ast, _opts), do: :ignore
   end
 
@@ -80,6 +93,30 @@ defmodule Reach.Plugin.LowerElixirASTTest do
 
     assert lowered_case.meta.origin.label == "dsl_if"
     assert lowered_case.source_span.file == "demo.ex"
+  end
+
+  test "data operator lowering retains operands origin and spans without annotating descendants" do
+    source = "dsl_data(left(), right() or fallback())"
+
+    assert {:ok, [operator]} =
+             ElixirFrontend.parse(source, file: "data.ex", plugins: [LoweringPlugin])
+
+    assert operator.type == :binary_op
+    assert operator.meta.operator == :and
+    assert operator.meta.operator_semantics == :data
+    assert operator.meta.origin.label == "dsl_data"
+    assert operator.meta.origin.plugin == LoweringPlugin
+    assert operator.source_span == Span.to_map(operator.meta.origin.span)
+    assert operator.source_span.start_line == 1
+    assert operator.source_span.start_col == 1
+    assert [left, right] = operator.children
+    assert left.meta.function == :left
+    assert left.source_span.start_col == 10
+    assert right.type == :binary_op
+    assert right.meta.operator == :or
+    refute Map.has_key?(right.meta, :operator_semantics)
+    assert Enum.map(right.children, & &1.meta.function) == [:right, :fallback]
+    assert Reach.Check.Changed.branch_count(operator) == 1
   end
 
   defp flatten(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &flatten/1)

@@ -673,11 +673,17 @@ defmodule Reach.Frontend.Elixir do
   defp translate({op, meta, [left, right]}, counter, file) when op in @binary_ops do
     left_node = translate(left, counter, file)
     right_node = translate(right, counter, file)
+    operator_meta = Map.merge(%{operator: op}, origin_meta(meta))
+
+    operator_meta =
+      if meta[:operator_semantics] == :data,
+        do: Map.put(operator_meta, :operator_semantics, :data),
+        else: operator_meta
 
     %Node{
       id: Counter.next(counter),
       type: :binary_op,
-      meta: %{operator: op},
+      meta: operator_meta,
       children: [left_node, right_node],
       source_span: span_from_meta(meta, file)
     }

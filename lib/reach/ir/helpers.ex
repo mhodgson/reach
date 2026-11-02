@@ -3,6 +3,20 @@ defmodule Reach.IR.Helpers do
 
   alias Reach.IR.Node
 
+  @doc """
+  Returns whether this node represents an execution branch.
+
+  Data operators do not branch, but their children must be inspected independently.
+  """
+  @spec execution_branch?(Node.t()) :: boolean()
+  def execution_branch?(%Node{type: :binary_op, meta: %{operator_semantics: :data}}),
+    do: false
+
+  def execution_branch?(%Node{type: :binary_op, meta: %{operator: operator}}),
+    do: operator in [:and, :or, :&&, :||]
+
+  def execution_branch?(%Node{type: type}), do: type in [:case, :receive, :try]
+
   def mark_as_definitions(%Node{type: :var, meta: meta} = node) do
     %{node | meta: Map.put(meta, :binding_role, :definition)}
   end

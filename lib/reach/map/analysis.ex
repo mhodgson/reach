@@ -574,10 +574,7 @@ defmodule Reach.Map.Analysis do
   defp branch_count(func) do
     func
     |> IR.all_nodes()
-    |> Enum.count(
-      &(&1.type in [:case, :receive, :try] or
-          (&1.type == :binary_op and &1.meta[:operator] in [:and, :or, :&&, :||]))
-    )
+    |> Enum.count(&IRHelpers.execution_branch?/1)
   end
 
   defp biggest_function([]), do: nil

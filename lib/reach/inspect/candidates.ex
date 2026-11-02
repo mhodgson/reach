@@ -8,6 +8,7 @@ defmodule Reach.Inspect.Candidates do
   alias Reach.Config
   alias Reach.Effects
   alias Reach.IR
+  alias Reach.IR.Helpers, as: IRHelpers
   alias Reach.Project.Query
 
   def find(project, mfa, func, candidate_config \\ %Config.Candidates{}) do
@@ -111,10 +112,7 @@ defmodule Reach.Inspect.Candidates do
   defp branch_count(func) do
     func
     |> IR.all_nodes()
-    |> Enum.count(
-      &(&1.type in [:case, :receive, :try] or
-          (&1.type == :binary_op and &1.meta[:operator] in [:and, :or, :&&, :||]))
-    )
+    |> Enum.count(&IRHelpers.execution_branch?/1)
   end
 
   defp function_effect_atoms(func, plugins) do

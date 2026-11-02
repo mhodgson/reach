@@ -240,7 +240,8 @@ defmodule Reach.Plugins.Ecto do
         queryable,
         Enum.map(options, fn
           {key, expression} when key in @field_expression_macros ->
-            {key, lower_field_expression(expression, bindings, opts)}
+            expression_opts = Keyword.put(opts, :operator_semantics, if(key == :where, do: :data))
+            {key, lower_field_expression(expression, bindings, expression_opts)}
 
           option ->
             option
@@ -254,7 +255,8 @@ defmodule Reach.Plugins.Ecto do
   defp lower_field_arguments(name, [queryable, bindings, expression], opts)
        when name in @field_expression_macros and is_list(bindings) do
     names = Enum.flat_map(bindings, &binding_name/1)
-    [queryable, bindings, lower_field_expression(expression, names, opts)]
+    expression_opts = Keyword.put(opts, :operator_semantics, if(name == :where, do: :data))
+    [queryable, bindings, lower_field_expression(expression, names, expression_opts)]
   end
 
   defp lower_field_arguments(_name, args, _opts), do: args
@@ -287,6 +289,11 @@ defmodule Reach.Plugins.Ecto do
 
   defp lower_field_expression({operator, meta, args}, bindings, opts)
        when operator in @field_expression_operators and is_list(args) do
+    meta =
+      if operator in [:and, :or] and opts[:operator_semantics] == :data,
+        do: Keyword.put(meta, :operator_semantics, :data),
+        else: meta
+
     {operator, meta, Enum.map(args, &lower_field_expression(&1, bindings, opts))}
   end
 

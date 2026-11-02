@@ -393,6 +393,10 @@ defmodule Reach.Evidence.NilParameter do
     end
   end
 
+  # Interpreted operator data does not constrain execution of its operands.
+  defp path_constraint(%{type: :binary_op, meta: %{operator_semantics: :data}}, _child_id),
+    do: nil
+
   defp path_constraint(
          %{type: :binary_op, meta: %{operator: operator}, children: [left, right]},
          child_id
@@ -448,6 +452,9 @@ defmodule Reach.Evidence.NilParameter do
       _opposite -> false
     end
   end
+
+  defp evaluate_boolean(%{type: :binary_op, meta: %{operator_semantics: :data}}, _bindings),
+    do: :unknown
 
   defp evaluate_boolean(%{type: :literal, meta: %{value: value}}, _bindings),
     do: value not in [false, nil]
@@ -555,6 +562,13 @@ defmodule Reach.Evidence.NilParameter do
         Enum.concat(own, lexical_guard_ids(parent_id, name, parents, nodes))
     end
   end
+
+  defp short_circuit_guards?(
+         %{type: :binary_op, meta: %{operator_semantics: :data}},
+         _child_id,
+         _name
+       ),
+       do: false
 
   defp short_circuit_guards?(
          %{type: :binary_op, meta: %{operator: operator}, children: [left, right]},
@@ -716,6 +730,13 @@ defmodule Reach.Evidence.NilParameter do
   end
 
   defp guarantees_non_nil?(node, name, outcome)
+
+  defp guarantees_non_nil?(
+         %{type: :binary_op, meta: %{operator_semantics: :data}},
+         _name,
+         _outcome
+       ),
+       do: false
 
   defp guarantees_non_nil?(%{type: :var, meta: %{name: name}}, name, true), do: true
 
