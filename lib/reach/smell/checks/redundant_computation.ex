@@ -60,41 +60,66 @@ defmodule Reach.Smell.Checks.RedundantComputation do
 
   @pattern_operators [:|, :{}, :@, :"::", :<<>>, :size]
 
-  defp findings(func) do
+  def run(project) do
+    project
+    |> Helpers.function_defs()
+    |> Enum.flat_map(&findings(&1, project.plugins))
+  end
+
+  defp findings(func, plugins) do
     func
-    |> collect_sequential_blocks()
+    |> collect_sequential_blocks(plugins)
     |> Enum.flat_map(&find_redundant_in_block/1)
   end
 
   defp find_redundant_in_block(block_calls) do
-    block_calls
-    |> Enum.group_by(fn node -> {node.meta[:module], node.meta[:function], node.meta[:arity]} end)
-    |> Enum.flat_map(fn {_key, group} ->
-      if length(group) > 1, do: find_same_arg_calls(group), else: []
-    end)
-  end
+    {findings, _calls} =
+      Enum.reduce(block_calls, {[], %{}}, fn
+        {:bind, name}, {findings, calls} ->
+          calls =
+            Map.reject(calls, fn {_key, call} ->
+              Enum.any?(call.children, &match?(%{type: :var, meta: %{name: ^name}}, &1))
+            end)
 
-  defp collect_sequential_blocks(node) do
-    calls = collect_block_calls(node, []) |> Enum.reverse()
+          {findings, calls}
 
-    nested =
-      (node.children || [])
-      |> Enum.flat_map(fn child ->
-        case child.type do
-          type when type in [:case, :fn] ->
-            child.children
-            |> Enum.filter(&(&1.type == :clause))
-            |> Enum.flat_map(&collect_sequential_blocks/1)
-
-          :clause ->
-            collect_sequential_blocks(child)
-
-          _ ->
-            []
-        end
+        node, {findings, calls} ->
+          key = {node.meta[:module], node.meta[:function], node.meta[:arity]}
+          previous = Map.get(calls, key)
+          next = if previous, do: maybe_redundant_call(previous, node), else: []
+          {Enum.reverse(next, findings), Map.put(calls, key, node)}
       end)
 
+    Enum.reverse(findings)
+  end
+
+  defp collect_sequential_blocks(%{type: type, children: children}, plugins)
+       when type in [:comprehension, :try] do
+    Enum.flat_map(children, &collect_sequential_blocks(&1, plugins))
+  end
+
+  defp collect_sequential_blocks(node, plugins) do
+    calls = collect_block_calls(node, [], plugins) |> Enum.reverse()
+    nested = nested_blocks(node, plugins)
     if calls != [], do: [calls | nested], else: nested
+  end
+
+  defp nested_blocks(node, plugins) do
+    (node.children || [])
+    |> Enum.flat_map(fn child ->
+      case child.type do
+        type when type in [:case, :fn] ->
+          child.children
+          |> Enum.filter(&(&1.type == :clause))
+          |> Enum.flat_map(&collect_sequential_blocks(&1, plugins))
+
+        type when type in [:clause, :comprehension, :try] ->
+          collect_sequential_blocks(child, plugins)
+
+        _ ->
+          nested_blocks(child, plugins)
+      end
+    end)
   end
 
   defp formatting_call?(%{meta: %{function: :to_string, module: Kernel}}), do: true
@@ -115,8 +140,8 @@ defmodule Reach.Smell.Checks.RedundantComputation do
 
   @excluded_kinds MapSet.new([:attribute, :field_access, :binary_size])
 
-  defp redundancy_candidate?(node) do
-    eligible_call?(node) and pure_source_call?(node)
+  defp redundancy_candidate?(node, plugins) do
+    eligible_call?(node) and pure_source_call?(node, plugins)
   end
 
   defp eligible_call?(node) do
@@ -125,30 +150,41 @@ defmodule Reach.Smell.Checks.RedundantComputation do
       node.meta[:kind] not in @excluded_kinds and node.meta[:module] != Access
   end
 
-  defp pure_source_call?(node) do
-    not generated_source_call?(node) and Effects.pure?(node) and not formatting_call?(node) and
+  defp pure_source_call?(node, plugins) do
+    not generated_source_call?(node) and Effects.pure?(node, plugins) and
+      not formatting_call?(node) and
       not stateful_helper?(node)
   end
 
   defp generated_source_call?(%{meta: %{origin: %{generated?: true}}}), do: true
   defp generated_source_call?(_node), do: false
 
-  defp collect_block_calls(node, acc) do
-    acc = if redundancy_candidate?(node), do: [node | acc], else: acc
+  defp collect_block_calls(%{type: type}, acc, _plugins)
+       when type in [:case, :fn, :comprehension, :try],
+       do: acc
+
+  defp collect_block_calls(%{type: :match, children: [pattern, value]}, acc, plugins) do
+    acc = collect_block_calls(value, acc, plugins)
+    Enum.reduce(defined_names(pattern), acc, fn name, acc -> [{:bind, name} | acc] end)
+  end
+
+  defp collect_block_calls(node, acc, plugins) do
+    acc = if redundancy_candidate?(node, plugins), do: [node | acc], else: acc
 
     node.children
-    |> Enum.reject(&(&1.type in [:case, :fn, :clause]))
-    |> Enum.reduce(acc, &collect_block_calls/2)
+    |> Enum.reject(&(&1.type in [:case, :fn, :clause, :comprehension, :try]))
+    |> Enum.reduce(acc, &collect_block_calls(&1, &2, plugins))
   end
 
-  defp find_same_arg_calls(calls) do
-    calls
-    |> Enum.chunk_every(2, 1, [])
-    |> Enum.flat_map(fn
-      [left, right] -> maybe_redundant_call(left, right)
-      _ -> []
-    end)
-  end
+  defp defined_names(%{type: :pin}), do: []
+
+  defp defined_names(%{type: :call, meta: %{function: :"::"}, children: [value, _specifier]}),
+    do: defined_names(value)
+
+  defp defined_names(%{type: :var, meta: %{binding_role: :definition, name: name}}),
+    do: [name]
+
+  defp defined_names(node), do: Enum.flat_map(node.children, &defined_names/1)
 
   defp maybe_redundant_call(left, right) do
     if same_args?(left, right) and left.source_span[:start_line] != right.source_span[:start_line] do

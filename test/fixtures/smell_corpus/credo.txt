@@ -32,7 +32,6 @@ lib/credo/cli/command/categories/output/default.ex:18  unsafe_atom_creation
 lib/credo/cli/command/diff/diff_command.ex:129  suboptimal
 lib/credo/cli/command/diff/diff_command.ex:134  bare_rescue
 lib/credo/cli/command/diff/diff_command.ex:138  suboptimal
-lib/credo/cli/command/diff/diff_summary.ex:130  redundant_computation
 lib/credo/cli/command/diff/output/default.ex:136  unsafe_atom_creation
 lib/credo/cli/command/diff/task/get_git_diff.ex:117  suboptimal
 lib/credo/cli/command/diff/task/get_git_diff.ex:91  suboptimal
@@ -49,7 +48,6 @@ lib/credo/cli/command/list/output/default.ex:60  unsafe_atom_creation
 lib/credo/cli/command/suggest/output/default.ex:123  unsafe_atom_creation
 lib/credo/cli/options.ex:124  suboptimal
 lib/credo/cli/options.ex:131  suboptimal
-lib/credo/cli/output/summary.ex:133  redundant_computation
 lib/credo/cli/switch.ex:26  unsafe_atom_creation
 lib/credo/cli/switch.ex:32  unsafe_atom_creation
 lib/credo/cli/task/prepare_checks_to_run.ex:18  suboptimal
@@ -76,3 +74,4 @@ lib/credo/sources.ex:155  suboptimal
 lib/credo/sources.ex:167  suboptimal
 lib/credo/sources.ex:174  suboptimal
 lib/credo/test/assertions.ex:182  string_building
+lib/credo/test/assertions.ex:59  redundant_computation

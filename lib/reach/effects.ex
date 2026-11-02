@@ -287,6 +287,12 @@ defmodule Reach.Effects do
     ensure_cache()
 
     all_nodes = Map.values(node_map)
+    parents = Map.new(for node <- all_nodes, child <- node.children, do: {child.id, node})
+
+    conditional_definitions =
+      Enum.filter(all_nodes, fn node ->
+        node.type == :function_def and conditional_definition?(node, parents)
+      end)
 
     module_aliases = inferred_module_aliases(all_nodes)
     preload_inference_modules(all_nodes, module_aliases, plugins)
@@ -323,9 +329,27 @@ defmodule Reach.Effects do
       end)
     end
 
+    # Source conditionals do not prove which definition or delegate is active.
+    # Shadow compiled hints for every canonical/default/short alias, not one branch.
+    Enum.each(conditional_definitions, fn definition ->
+      aliases = default_arity_keys(definition) ++ module_alias_keys(definition, module_aliases)
+      cache_function_effect(function_key(definition), aliases, :unknown, plugins)
+    end)
+
+    conditional_keys = Enum.map(conditional_definitions, &function_key/1)
+    func_calls = Map.drop(func_calls, conditional_keys)
+
     with_local_inference_modules(local_modules, fn ->
       with_dependency_collection(fn -> do_infer(func_calls, plugins) end)
     end)
+  end
+
+  defp conditional_definition?(node, parents) do
+    case Map.get(parents, node.id) do
+      nil -> false
+      %Node{type: :case} -> true
+      parent -> conditional_definition?(parent, parents)
+    end
   end
 
   defp preload_inference_modules(nodes, module_aliases, plugins) do
@@ -907,6 +931,9 @@ defmodule Reach.Effects do
       _other -> false
     end
   end
+
+  defp do_classify_call(DateTime, :utc_now, arity) when arity in [0, 1, 2],
+    do: classification(:read, :builtin, :high)
 
   defp do_classify_call(module, function, arity) do
     builtin_effect =

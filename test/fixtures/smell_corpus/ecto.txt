@@ -6,7 +6,9 @@ lib/ecto/changeset.ex:4220  string_building
 lib/ecto/changeset.ex:518  string_building
 lib/ecto/changeset/relation.ex:486  suboptimal
 lib/ecto/embedded.ex:237  string_building
+lib/ecto/enum.ex:87  redundant_computation
 lib/ecto/query.ex:545  string_building
+lib/ecto/query/builder.ex:95  redundant_computation
 lib/ecto/query/builder/filter.ex:28  string_building
 lib/ecto/query/builder/filter.ex:37  string_building
 lib/ecto/query/builder/filter.ex:38  string_building
@@ -40,6 +42,4 @@ lib/ecto/repo/supervisor.ex:161  unsafe_atom_creation
 lib/ecto/repo/supervisor.ex:164  suboptimal
 lib/ecto/repo/supervisor.ex:164  unsafe_atom_creation
 lib/ecto/repo/supervisor.ex:58  unsafe_atom_creation
-lib/ecto/schema.ex:2431  redundant_computation
-lib/ecto/schema.ex:2443  redundant_computation
 lib/ecto/schema/loader.ex:107  string_building
