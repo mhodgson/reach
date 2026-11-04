@@ -13,7 +13,7 @@ defmodule Reach.CLI.Commands.Check.Smells do
     config = Config.read() |> Config.normalize()
     project = load_project(opts, positional)
     if is_nil(opts[:project]), do: :erlang.garbage_collect()
-    findings = SmellsCheck.run(project, config)
+    findings = SmellsCheck.run(project, config, term_store: :persistent_term)
     check_findings = Enum.map(findings, &Finding.from_smell/1)
 
     scope = Project.analysis_scope()

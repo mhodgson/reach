@@ -1,6 +1,8 @@
 defmodule Reach.Smell.Source do
   @moduledoc false
 
+  alias Reach.Project.TermStore
+
   @elixir_extensions ~w(.ex .exs)
 
   def module_files(project) do
@@ -19,7 +21,7 @@ defmodule Reach.Smell.Source do
   def cached_ast(file) do
     key = {:reach_smell_ast, file}
 
-    case Process.get(key) do
+    case Process.get(key) || TermStore.lookup({__MODULE__, :ast, file}) do
       nil ->
         ast =
           file
@@ -50,5 +52,29 @@ defmodule Reach.Smell.Source do
       zipper ->
         zipper
     end
+  end
+
+  @doc """
+  Parses every module file once, side by side, into `Reach.Project.TermStore`
+  so checks in other processes read the same ASTs. Returns `:ok` when every
+  readable file was stored.
+  """
+  def share_asts(project, opts) do
+    project
+    |> module_files()
+    |> Enum.filter(&File.regular?/1)
+    |> Task.async_stream(&share_ast(&1, opts), ordered: false, timeout: :infinity)
+    |> Enum.all?(&match?({:ok, true}, &1))
+    |> if(do: :ok, else: :partial)
+  end
+
+  defp share_ast(file, opts) do
+    ast = file |> File.read!() |> Sourceror.parse_string!()
+    :erlang.garbage_collect()
+    {:memory, bytes} = Process.info(self(), :memory)
+    match?({:stored, _key}, TermStore.put(ast, {__MODULE__, :ast, file}, bytes, opts))
+  rescue
+    # Unparseable files stay unshared; each check handles them as before.
+    _error in [File.Error, MatchError, SyntaxError, TokenMissingError] -> true
   end
 end

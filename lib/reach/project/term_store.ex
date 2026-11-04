@@ -42,6 +42,10 @@ defmodule Reach.Project.TermStore do
     end
   end
 
+  @doc "The term stored under `key` by `put/4`, or `nil`."
+  @spec lookup(term()) :: term() | nil
+  def lookup(key), do: :persistent_term.get({__MODULE__, key}, nil)
+
   @doc "The term behind a handle from `put/4`."
   @spec resolve({:stored, term()} | {:kept, term()}) :: term()
   def resolve({:stored, full_key}), do: :persistent_term.get(full_key)

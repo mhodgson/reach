@@ -4,17 +4,32 @@ defmodule Reach.Check.Smells do
   """
 
   alias Reach.{Config, Plugin}
-  alias Reach.Smell.{DSLGuard, Registry, SourceRunner, Suppressions}
+  alias Reach.Project.TermStore
+  alias Reach.Smell.{DSLGuard, Registry, Source, SourceRunner, Suppressions}
 
-  def run(project, config \\ []) do
+  @doc """
+  Runs the smell checks. With `term_store: :persistent_term`, source files are
+  parsed once into the shared store and the checks run side by side.
+  """
+  def run(project, config \\ [], opts \\ []) do
     config = Config.normalize(config)
 
     {pattern_checks, checks} =
       Enum.split_with(Reach.Smell.Registry.checks(project, config), &pattern_check?/1)
 
+    runs = [
+      fn -> SourceRunner.run(project, pattern_checks) end
+      | Enum.map(checks, fn check -> fn -> run_check(check, project, config) end end)
+    ]
+
     findings =
-      SourceRunner.run(project, pattern_checks) ++
-        Enum.flat_map(checks, &run_check(&1, project, config))
+      if TermStore.store?(opts) and Source.share_asts(project, opts) == :ok do
+        runs
+        |> Task.async_stream(& &1.(), ordered: true, timeout: :infinity)
+        |> Enum.flat_map(fn {:ok, found} -> found end)
+      else
+        Enum.flat_map(runs, & &1.())
+      end
 
     plugin_checks = project |> Map.get(:plugins, []) |> Plugin.smell_checks() |> MapSet.new()
 
