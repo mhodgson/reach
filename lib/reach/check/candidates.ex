@@ -134,11 +134,11 @@ defmodule Reach.Check.Candidates do
         node.meta[:name]
       end
 
-    module_by_file = Architecture.module_by_file(project)
+    module_by_node = Architecture.module_by_node(project)
 
     for {_, node} <- project.nodes,
         Architecture.remote_call?(node),
-        caller = node.source_span && Map.get(module_by_file, node.source_span.file),
+        caller = node.source_span && Map.get(module_by_node, node.id),
         callee = node.meta[:module],
         caller && callee && caller != callee && MapSet.member?(modules, callee) do
       %{caller: caller, callee: callee, node: node}
