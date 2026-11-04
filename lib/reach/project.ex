@@ -22,6 +22,7 @@ defmodule Reach.Project do
 
   alias Reach.{DependencySummary, Frontend, IR, Plugin}
   alias Reach.IR.Counter
+  alias Reach.Project.TermStore
 
   import Reach.IR.Helpers, only: [module_from_path: 1]
 
@@ -382,6 +383,7 @@ defmodule Reach.Project do
     summaries = Keyword.get(opts, :summaries, %{})
     timeout = Keyword.get(opts, :build_timeout, :infinity)
     max_concurrency = Keyword.get(opts, :build_concurrency, System.schedulers_online())
+    store_ref = make_ref()
 
     parsed_modules
     |> Task.async_stream(
@@ -392,13 +394,25 @@ defmodule Reach.Project do
             summaries: summaries
           )
 
-        {module_name, sdg}
+        {module_name, TermStore.put(sdg, {store_ref, module_name}, worker_heap_bytes(opts), opts)}
       end,
       max_concurrency: max_concurrency,
       ordered: false,
       timeout: timeout
     )
-    |> Map.new(fn {:ok, result} -> result end)
+    |> Map.new(fn {:ok, {module_name, handle}} -> {module_name, TermStore.resolve(handle)} end)
+  end
+
+  # The worker holds little besides the graph it just built, so its collected
+  # heap stands in for the graph's size.
+  defp worker_heap_bytes(opts) do
+    if TermStore.store?(opts) do
+      :erlang.garbage_collect()
+      {:memory, bytes} = Process.info(self(), :memory)
+      bytes
+    else
+      0
+    end
   end
 
   defp merge_project(module_sdgs, opts) do

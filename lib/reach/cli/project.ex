@@ -3,6 +3,7 @@ defmodule Reach.CLI.Project do
 
   alias Reach.Check.AnalysisScope
   alias Reach.Project, as: ReachProject
+  alias Reach.Project.TermStore
   alias Reach.Project.Query
 
   @analysis_scope_key {__MODULE__, :analysis_scope}
@@ -19,22 +20,36 @@ defmodule Reach.CLI.Project do
     show_scope? = Keyword.get(opts, :show_scope, false)
     compile(quiet?)
 
-    case Keyword.get(opts, :paths) do
-      nil ->
-        set_display_root(File.cwd!())
-        %{roots: roots, files: files} = ReachProject.mix_source_files(project_opts(opts))
-        register_analysis_scope(:mix, roots, files, Mix.env())
-        render_analysis_start(quiet?, show_scope?, :project, files)
-        ReachProject.from_sources(files, project_opts(opts))
+    files =
+      case Keyword.get(opts, :paths) do
+        nil ->
+          set_display_root(File.cwd!())
+          %{roots: roots, files: files} = ReachProject.mix_source_files(project_opts(opts))
+          register_analysis_scope(:mix, roots, files, Mix.env())
+          render_analysis_start(quiet?, show_scope?, :project, files)
+          files
 
-      paths ->
-        set_display_root(display_root_for_paths(paths))
-        roots = List.wrap(paths)
-        files = expand_paths(paths)
-        register_analysis_scope(:paths, roots, files, nil)
-        render_analysis_start(quiet?, show_scope?, :files, files)
-        ReachProject.from_sources(files, project_opts(opts))
-    end
+        paths ->
+          set_display_root(display_root_for_paths(paths))
+          roots = List.wrap(paths)
+          files = expand_paths(paths)
+          register_analysis_scope(:paths, roots, files, nil)
+          render_analysis_start(quiet?, show_scope?, :files, files)
+          files
+      end
+
+    project_opts = Keyword.put_new(project_opts(opts), :term_store, :persistent_term)
+
+    files
+    |> ReachProject.from_sources(project_opts)
+    |> keep_project(project_opts)
+  end
+
+  # Mix tasks analyse once and exit, so the finished project can leave the heap.
+  defp keep_project(project, project_opts) do
+    :erlang.garbage_collect()
+    {:memory, heap_bytes} = Process.info(self(), :memory)
+    TermStore.keep(project, {__MODULE__, make_ref()}, heap_bytes, project_opts)
   end
 
   def register_analysis_scope(source, roots, files, mix_env \\ nil) do
@@ -150,7 +165,7 @@ defmodule Reach.CLI.Project do
   end
 
   defp project_opts(opts),
-    do: Keyword.take(opts, [:plugins, :source_only, :retain_module_sdgs])
+    do: Keyword.take(opts, [:plugins, :source_only, :retain_module_sdgs, :term_store])
 
   def compile(quiet? \\ false)
 

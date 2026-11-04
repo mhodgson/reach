@@ -252,17 +252,30 @@ defmodule Reach.CLI.Commands.Check do
 
       path ->
         Project.load(
-          [paths: [path], quiet: opts[:format] == "json", show_scope: true] ++ plugin_opts(opts)
+          [
+            paths: [path],
+            quiet: opts[:format] == "json",
+            show_scope: true,
+            retain_module_sdgs: false
+          ] ++
+            plugin_opts(opts)
         )
 
       opts[:paths] ->
         Project.load(
-          [paths: opts[:paths], quiet: opts[:format] == "json", show_scope: true] ++
-            plugin_opts(opts)
+          [
+            paths: opts[:paths],
+            quiet: opts[:format] == "json",
+            show_scope: true,
+            retain_module_sdgs: false
+          ] ++ plugin_opts(opts)
         )
 
       true ->
-        Project.load([quiet: opts[:format] == "json", show_scope: true] ++ plugin_opts(opts))
+        Project.load(
+          [quiet: opts[:format] == "json", show_scope: true, retain_module_sdgs: false] ++
+            plugin_opts(opts)
+        )
     end
   end
 end
