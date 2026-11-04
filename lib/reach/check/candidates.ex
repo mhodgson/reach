@@ -35,7 +35,7 @@ defmodule Reach.Check.Candidates do
       (mixed_effect_candidates(project, config.candidates) ++
          extract_region_candidates(project, config.candidates) ++
          boundary_candidates(project, config) ++
-         cycle_candidates(project, config.candidates) ++
+         cycle_candidates(project, config) ++
          boundary_contract_candidates(project, config.candidates) ++
          map_contract_candidates(project, config.candidates) ++
          dependency_bypass_candidates(project, config) ++
@@ -73,12 +73,15 @@ defmodule Reach.Check.Candidates do
     }
   end
 
-  defp cycle_candidates(project, candidate_config) do
+  defp cycle_candidates(project, config) do
+    candidate_config = config.candidates
+    layer_edges = Architecture.layer_graph(project, config).edges
     deps = module_dependency_map(project)
     call_examples = module_call_examples(project, candidate_config)
 
     deps
     |> module_cycle_components()
+    |> Enum.filter(&configured_layer_cycle?(&1, layer_edges))
     |> Enum.take(candidate_config.limits.per_kind)
     |> Enum.with_index(1)
     |> Enum.map(fn {cycle, index} ->
@@ -90,7 +93,7 @@ defmodule Reach.Check.Candidates do
         risk: :medium,
         confidence: :low,
         actionability: :needs_project_policy,
-        evidence: ["module_dependency_cycle"],
+        evidence: ["module_dependency_cycle", "configured_layer_cycle"],
         proof: [
           "Confirm the cycle violates intended architecture before changing code.",
           "Review representative_calls to find the smallest boundary-breaking call.",
@@ -103,6 +106,21 @@ defmodule Reach.Check.Candidates do
           representative_component_calls(cycle, call_examples, candidate_config)
       )
     end)
+  end
+
+  defp configured_layer_cycle?(cycle, edges) do
+    modules = MapSet.new(cycle)
+
+    edges
+    |> Enum.filter(fn edge ->
+      MapSet.member?(modules, inspect(edge.caller)) and
+        MapSet.member?(modules, inspect(edge.callee))
+    end)
+    |> Enum.reduce(%{}, fn edge, deps ->
+      Map.update(deps, edge.from, [edge.to], &[edge.to | &1])
+    end)
+    |> module_cycle_components()
+    |> Enum.any?()
   end
 
   defp module_dependency_map(project) do

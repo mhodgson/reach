@@ -207,6 +207,24 @@ defmodule Reach.ProgramFactsIntegrationTest do
       program = ProgramFacts.generate!(policy: policy, seed: 1100 + index)
       {_ok, dir, _program} = ProgramFacts.Project.write_tmp!(program, root: root)
 
+      if policy == :module_cycle do
+        project =
+          Reach.Project.from_glob(Path.join(dir, "lib/**/*.ex"), source_only: true, plugins: [])
+
+        modules = for {_id, node} <- project.nodes, node.type == :module_def, do: node.meta[:name]
+        assert length(modules) > 1
+
+        layers =
+          modules
+          |> Enum.sort()
+          |> Enum.with_index()
+          |> Enum.map(fn {module, index} ->
+            {String.to_atom("generated_layer_#{index}"), [inspect(module)]}
+          end)
+
+        File.write!(Path.join(dir, ".reach.exs"), inspect(layers: layers))
+      end
+
       data =
         in_project(dir, fn ->
           output =
