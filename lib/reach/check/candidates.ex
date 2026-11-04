@@ -30,16 +30,24 @@ defmodule Reach.Check.Candidates do
     top = Keyword.get(opts, :top, 40)
     facade_modules = Facade.collect_project(project)
 
+    generators = [
+      fn -> mixed_effect_candidates(project, config.candidates) end,
+      fn -> extract_region_candidates(project, config.candidates) end,
+      fn -> boundary_candidates(project, config) end,
+      fn -> cycle_candidates(project, config.candidates) end,
+      fn -> boundary_contract_candidates(project, config.candidates) end,
+      fn -> map_contract_candidates(project, config.candidates) end,
+      fn -> dependency_bypass_candidates(project, config) end,
+      fn -> facade_candidates(facade_modules, config) end,
+      fn -> clone_consolidation_candidates(project, config, facade_modules) end
+    ]
+
+    # Each generator only reads the project, so they run side by side; results
+    # keep generator order so duplicate ids resolve as before.
     candidates =
-      (mixed_effect_candidates(project, config.candidates) ++
-         extract_region_candidates(project, config.candidates) ++
-         boundary_candidates(project, config) ++
-         cycle_candidates(project, config.candidates) ++
-         boundary_contract_candidates(project, config.candidates) ++
-         map_contract_candidates(project, config.candidates) ++
-         dependency_bypass_candidates(project, config) ++
-         facade_candidates(facade_modules, config) ++
-         clone_consolidation_candidates(project, config, facade_modules))
+      generators
+      |> Task.async_stream(& &1.(), ordered: true, timeout: :infinity)
+      |> Enum.flat_map(fn {:ok, found} -> found end)
       |> Enum.uniq_by(& &1.id)
       |> Enum.sort_by(&candidate_rank/1)
       |> Enum.take(top)
