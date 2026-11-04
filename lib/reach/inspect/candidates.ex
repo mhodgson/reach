@@ -7,6 +7,7 @@ defmodule Reach.Inspect.Candidates do
   alias Reach.Check.{BoundaryContractCandidates, Candidate}
   alias Reach.Config
   alias Reach.Effects
+  alias Reach.Evidence.Refactoring
   alias Reach.IR
   alias Reach.IR.Helpers, as: IRHelpers
   alias Reach.Project.Query
@@ -25,17 +26,25 @@ defmodule Reach.Inspect.Candidates do
       |> maybe_candidate(
         isolate_effects_candidate(func, non_pure_effects, candidate_config, project.plugins)
       )
-      |> maybe_candidate(extract_region_candidate(func, branch_count, callers, candidate_config))
+      |> maybe_candidate(
+        extract_region_candidate(func, branch_count, callers, candidate_config, project.plugins)
+      )
 
     local_candidates ++ boundary_contract_candidates(project, mfa, candidate_config)
   end
 
   defp isolate_effects_candidate(func, effects, candidate_config, plugins) do
+    region = Refactoring.pure_region(func, plugins)
+
     cond do
       length(effects) < candidate_config.thresholds.mixed_effect_count ->
         nil
 
-      Analysis.expected_effect_boundary?(func, plugins) ->
+      Analysis.expected_effect_boundary?(func, plugins) or
+          Refactoring.read_through_cache?(func, plugins) ->
+        nil
+
+      is_nil(region) or region.branches < candidate_config.thresholds.branchy_function_branches ->
         nil
 
       true ->
@@ -48,7 +57,8 @@ defmodule Reach.Inspect.Candidates do
           risk: :medium,
           confidence: :medium,
           actionability: :review_effect_order,
-          evidence: ["mixed_effects"],
+          evidence: ["mixed_effects", "distinct_pure_region"],
+          region: region,
           effects: effects,
           proof: [
             "Preserve side-effect order exactly.",
@@ -61,15 +71,18 @@ defmodule Reach.Inspect.Candidates do
     end
   end
 
-  defp extract_region_candidate(func, branch_count, callers, candidate_config) do
-    if branch_count < candidate_config.thresholds.branchy_function_branches do
+  defp extract_region_candidate(func, branch_count, callers, candidate_config, plugins) do
+    region = Refactoring.pure_region(func, plugins)
+
+    if branch_count < candidate_config.thresholds.branchy_function_branches or
+         is_nil(region) or region.branches < candidate_config.thresholds.branchy_function_branches do
       nil
     else
-      do_extract_region_candidate(func, branch_count, callers, candidate_config)
+      do_extract_region_candidate(func, branch_count, callers, candidate_config, plugins)
     end
   end
 
-  defp do_extract_region_candidate(func, branch_count, callers, candidate_config) do
+  defp do_extract_region_candidate(func, branch_count, callers, candidate_config, plugins) do
     Candidate.new(
       id: "R1-001",
       kind: :extract_pure_region,
@@ -83,7 +96,8 @@ defmodule Reach.Inspect.Candidates do
         ),
       confidence: :medium,
       actionability: :needs_region_proof,
-      evidence: ["branchy_function", "caller_impact"],
+      evidence: ["branchy_function", "caller_impact", "distinct_pure_region"],
+      region: Refactoring.pure_region(func, plugins),
       branches: branch_count,
       direct_caller_count: length(callers),
       proof: [

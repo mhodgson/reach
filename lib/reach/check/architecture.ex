@@ -47,12 +47,12 @@ defmodule Reach.Check.Architecture do
   def layer_graph(project, config) do
     config = Config.normalize(config)
     layers = config.layers
-    module_by_file = module_by_file(project)
+    module_by_node = module_by_node(project)
 
     edges =
       for({_id, node} <- project.nodes, remote_call?(node), do: node)
       |> Enum.flat_map(fn node ->
-        caller_module = node.source_span && Map.get(module_by_file, node.source_span.file)
+        caller_module = node.source_span && Map.get(module_by_node, node.id)
         callee_module = node.meta[:module]
 
         with caller when not is_nil(caller) <- caller_module,
@@ -80,6 +80,27 @@ defmodule Reach.Check.Architecture do
       |> Map.put(:type, :forbidden_dependency)
       |> Violation.new()
     end)
+  end
+
+  @doc "Maps nodes to their lexical module, preserving nested and sibling module ownership."
+  def module_by_node(project) do
+    Enum.reduce(project.nodes, %{}, fn
+      {_id, %{type: :module_def, meta: %{name: module}, children: children}}, owners ->
+        Enum.reduce(children, owners, &index_module_node(&1, module, &2))
+
+      _, owners ->
+        owners
+    end)
+  end
+
+  defp index_module_node(%{type: :module_def}, _module, owners), do: owners
+
+  defp index_module_node(node, module, owners) do
+    Enum.reduce(
+      node.children,
+      Map.put(owners, node.id, module),
+      &index_module_node(&1, module, &2)
+    )
   end
 
   def module_by_file(project) do
@@ -169,11 +190,11 @@ defmodule Reach.Check.Architecture do
     public_api = List.wrap(config.boundaries.public)
     internal = List.wrap(config.boundaries.internal)
     internal_callers = config.boundaries.internal_callers
-    module_by_file = module_by_file(project)
+    module_by_node = module_by_node(project)
 
     for({_id, node} <- project.nodes, remote_call?(node), do: node)
     |> Enum.flat_map(fn node ->
-      caller = node.source_span && Map.get(module_by_file, node.source_span.file)
+      caller = node.source_span && Map.get(module_by_node, node.id)
       callee = node.meta[:module]
 
       cond do
@@ -215,14 +236,14 @@ defmodule Reach.Check.Architecture do
   defp forbidden_call_violations(project, config) do
     config = Config.normalize(config)
     rules = config.calls.forbidden
-    module_by_file = module_by_file(project)
+    module_by_node = module_by_node(project)
 
     for({_id, node} <- project.nodes, remote_call?(node), do: node)
-    |> Enum.flat_map(&forbidden_call_violations_for_node(&1, rules, module_by_file))
+    |> Enum.flat_map(&forbidden_call_violations_for_node(&1, rules, module_by_node))
   end
 
-  defp forbidden_call_violations_for_node(node, rules, module_by_file) do
-    caller = node.source_span && Map.get(module_by_file, node.source_span.file)
+  defp forbidden_call_violations_for_node(node, rules, module_by_node) do
+    caller = node.source_span && Map.get(module_by_node, node.id)
     call = remote_call_name(node)
 
     rules
@@ -356,15 +377,15 @@ defmodule Reach.Check.Architecture do
 
   defp effect_policy_violations(project, config) do
     config = Config.normalize(config)
-    module_by_file = module_by_file(project)
+    module_by_node = module_by_node(project)
 
     for({_id, node} <- project.nodes, node.type == :function_def, do: node)
-    |> Enum.flat_map(&effect_policy_violation(&1, config, module_by_file, project.plugins))
+    |> Enum.flat_map(&effect_policy_violation(&1, config, module_by_node, project.plugins))
   end
 
-  defp effect_policy_violation(func, config, module_by_file, plugins) do
+  defp effect_policy_violation(func, config, module_by_node, plugins) do
     module =
-      func.meta[:module] || (func.source_span && Map.get(module_by_file, func.source_span.file))
+      func.meta[:module] || (func.source_span && Map.get(module_by_node, func.id))
 
     with allowed when not is_nil(allowed) <- allowed_effects_for(module, config),
          false <- allowed == :any,
