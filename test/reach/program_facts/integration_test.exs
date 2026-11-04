@@ -197,10 +197,13 @@ defmodule Reach.ProgramFactsIntegrationTest do
     end
   end
 
-  test "generated candidate fixtures produce graph-backed candidates", %{root: root} do
-    candidate_cases = [module_cycle: "break_cycle", mixed_effect_boundary: "isolate_effects"]
+  test "generated candidates distinguish real cycles from mixed orchestration", %{root: root} do
+    candidate_cases = [
+      module_cycle: {"break_cycle", true},
+      mixed_effect_boundary: {"isolate_effects", false}
+    ]
 
-    for {{policy, expected_kind}, index} <- Enum.with_index(candidate_cases, 1) do
+    for {{policy, {expected_kind, expected}}, index} <- Enum.with_index(candidate_cases, 1) do
       program = ProgramFacts.generate!(policy: policy, seed: 1100 + index)
       {_ok, dir, _program} = ProgramFacts.Project.write_tmp!(program, root: root)
 
@@ -214,7 +217,7 @@ defmodule Reach.ProgramFactsIntegrationTest do
           decode_json(output)
         end)
 
-      assert Enum.any?(data["candidates"], &(&1["kind"] == expected_kind))
+      assert Enum.any?(data["candidates"], &(&1["kind"] == expected_kind)) == expected
     end
   end
 

@@ -13,7 +13,7 @@ defmodule Reach.IR.Helpers do
     do: false
 
   def execution_branch?(%Node{type: :binary_op, meta: %{operator: operator}}),
-    do: operator in [:and, :or, :&&, :||]
+    do: operator in [:and, :or, :&&, :||, :andalso, :orelse]
 
   def execution_branch?(%Node{type: type}), do: type in [:case, :receive, :try]
 

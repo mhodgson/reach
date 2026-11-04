@@ -15,6 +15,7 @@ defmodule Reach.Check.Candidates do
   }
 
   alias Reach.Config
+  alias Reach.Evidence.Refactoring
   alias Reach.Evidence
   alias Reach.Evidence.{CloneAnalysis, Facade, MapContract}
   alias Reach.IR.Helpers, as: IRHelpers
@@ -189,10 +190,16 @@ defmodule Reach.Check.Candidates do
 
   defp mixed_effect_candidates(project, candidate_config) do
     for({_, node} <- project.nodes, node.type == :function_def and node.source_span, do: node)
-    |> Enum.reject(&Analysis.expected_effect_boundary?(&1, project.plugins))
+    |> Enum.reject(
+      &(Analysis.expected_effect_boundary?(&1, project.plugins) or
+          Refactoring.read_through_cache?(&1, project.plugins))
+    )
     |> Enum.map(fn func -> {func, Architecture.concrete_effects(func, project.plugins)} end)
-    |> Enum.filter(fn {_func, effects} ->
-      length(effects) >= candidate_config.thresholds.mixed_effect_count
+    |> Enum.filter(fn {func, effects} ->
+      region = Refactoring.pure_region(func, project.plugins)
+
+      length(effects) >= candidate_config.thresholds.mixed_effect_count and region != nil and
+        region.branches >= candidate_config.thresholds.branchy_function_branches
     end)
     |> Enum.sort_by(fn {func, effects} ->
       {-length(effects), func.source_span.file, func.source_span.start_line}
@@ -212,7 +219,8 @@ defmodule Reach.Check.Candidates do
         risk: :medium,
         confidence: :medium,
         actionability: :review_effect_order,
-        evidence: ["mixed_effects"],
+        evidence: ["mixed_effects", "distinct_pure_region"],
+        region: Refactoring.pure_region(func, project.plugins),
         effects: effects,
         proof: [
           "Preserve side-effect order exactly.",
@@ -230,8 +238,11 @@ defmodule Reach.Check.Candidates do
     |> Enum.map(fn func ->
       {func, Changed.branch_count(func), Query.callers(project, function_id(func), 1)}
     end)
-    |> Enum.filter(fn {_func, branches, callers} ->
-      branches >= candidate_config.thresholds.branchy_function_branches and callers != []
+    |> Enum.filter(fn {func, branches, callers} ->
+      region = Refactoring.pure_region(func, project.plugins)
+
+      branches >= candidate_config.thresholds.branchy_function_branches and callers != [] and
+        region != nil and region.branches >= candidate_config.thresholds.branchy_function_branches
     end)
     |> Enum.reject(fn {func, _branches, _callers} ->
       Analysis.expected_effect_boundary?(func, project.plugins) and
@@ -257,7 +268,8 @@ defmodule Reach.Check.Candidates do
           ),
         confidence: :medium,
         actionability: :needs_region_proof,
-        evidence: ["branchy_function", "caller_impact"],
+        evidence: ["branchy_function", "caller_impact", "distinct_pure_region"],
+        region: Refactoring.pure_region(func, project.plugins),
         branches: branches,
         direct_caller_count: length(callers),
         proof: [

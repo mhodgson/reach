@@ -115,7 +115,7 @@ defmodule Reach.EctoQueryBranchCountTest do
     assert_query_candidate(:from_query, 0)
   end
 
-  test "runtime branches inside a pin still produce extraction candidates" do
+  test "runtime branches inside a pin remain hotspots without extraction evidence" do
     assert_query_candidate(:runtime_branchy, 8)
   end
 
@@ -185,8 +185,8 @@ defmodule Reach.EctoQueryBranchCountTest do
       assert is_nil(inspect_candidate)
     else
       assert hotspot.branches == branches
-      assert candidate.branches == branches
-      assert inspect_candidate.branches == branches
+      assert is_nil(candidate)
+      assert is_nil(inspect_candidate)
     end
   end
 

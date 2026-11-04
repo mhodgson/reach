@@ -932,6 +932,9 @@ defmodule Reach.Effects do
     end
   end
 
+  defp do_classify_call(Application, :app_dir, arity) when arity in [1, 2],
+    do: classification(:read, :builtin, :high)
+
   defp do_classify_call(DateTime, :utc_now, arity) when arity in [0, 1, 2],
     do: classification(:read, :builtin, :high)
 

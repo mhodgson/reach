@@ -20,6 +20,7 @@ defmodule Reach.Check.Candidate do
     :representative_calls,
     :call,
     :branches,
+    :region,
     :direct_caller_count,
     :keys,
     :occurrences,
